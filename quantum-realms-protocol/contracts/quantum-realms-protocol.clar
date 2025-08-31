@@ -385,6 +385,7 @@
             campaign-data
             (begin
                 (asserts! (< block-height (get end-timestamp campaign-data)) ERR-PROBABILITY-CLOSED)
+                (asserts! (not (get settled campaign-data)) ERR-ALREADY-SETTLED)
                 
                 (map-set quantum-predictions
                     { timeline-id: timeline-id, member: member }
@@ -417,4 +418,92 @@
         (match (map-get? temporal-campaigns { timeline-id: timeline-id })
             campaign-data
             (begin
-                (asserts! (is-eq settler (get guild-leader campaign-data))
+                (asserts! (is-eq settler (get guild-leader campaign-data)) ERR-NOT-AUTHORIZED)
+                (asserts! (>= block-height (get end-timestamp campaign-data)) ERR-INVALID-TIMESTAMP)
+                (asserts! (not (get settled campaign-data)) ERR-ALREADY-SETTLED)
+                
+                (map-set temporal-campaigns
+                    { timeline-id: timeline-id }
+                    (merge campaign-data 
+                        { 
+                            actual-outcome: actual-outcome,
+                            settled: true
+                        }
+                    )
+                )
+                (ok true)
+            )
+            ERR-TERRITORY-NOT-FOUND
+        )
+    )
+)
+
+(define-public (claim-prediction-reward (timeline-id uint))
+    (let ((member tx-sender))
+        (match (map-get? quantum-predictions { timeline-id: timeline-id, member: member })
+            prediction-data
+            (match (map-get? temporal-campaigns { timeline-id: timeline-id })
+                campaign-data
+                (begin
+                    (asserts! (get settled campaign-data) ERR-NOT-SETTLED)
+                    (asserts! (not (get claimed prediction-data)) ERR-ALREADY-CLAIMED)
+                    
+                    ;; Simple reward calculation - if prediction is within 10% of actual outcome, give reward
+                    (let ((accuracy (if (> (get predicted-probability prediction-data) (get actual-outcome campaign-data))
+                                       (- (get predicted-probability prediction-data) (get actual-outcome campaign-data))
+                                       (- (get actual-outcome campaign-data) (get predicted-probability prediction-data)))))
+                        (if (<= accuracy u10) ;; Within 10% accuracy
+                            (begin
+                                (map-set quantum-predictions
+                                    { timeline-id: timeline-id, member: member }
+                                    (merge prediction-data { claimed: true })
+                                )
+                                (ok (get potential-reward prediction-data))
+                            )
+                            (ok u0) ;; No reward for inaccurate predictions
+                        )
+                    )
+                )
+                ERR-TERRITORY-NOT-FOUND
+            )
+            ERR-TERRITORY-NOT-FOUND
+        )
+    )
+)
+
+;; Read-only functions for querying data
+(define-read-only (get-guild-leader-info (leader principal))
+    (map-get? guild-leaders { leader: leader })
+)
+
+(define-read-only (get-guild-membership-nft (leader principal) (member principal))
+    (map-get? guild-membership-nfts { leader: leader, member: member })
+)
+
+(define-read-only (get-territory-info (territory-id uint))
+    (map-get? territory-registry { territory-id: territory-id })
+)
+
+(define-read-only (get-temporal-campaign-info (timeline-id uint))
+    (map-get? temporal-campaigns { timeline-id: timeline-id })
+)
+
+(define-read-only (get-quantum-prediction (timeline-id uint) (member principal))
+    (map-get? quantum-predictions { timeline-id: timeline-id, member: member })
+)
+
+(define-read-only (get-consensus-proof (user principal) (territory-id uint))
+    (map-get? quantum-consensus-proofs { user: user, territory-id: territory-id })
+)
+
+(define-read-only (get-protocol-owner)
+    (var-get protocol-owner)
+)
+
+(define-read-only (get-quantum-fee-rate)
+    (var-get quantum-fee-rate)
+)
+
+(define-read-only (get-min-quantum-score)
+    (var-get min-quantum-score)
+)
